@@ -1,0 +1,219 @@
+#!/usr/bin/env python3
+
+# This file is part of etagsum.
+#
+# Copyright (C) 2021 Gard Spreemann <gspr@nonempty.org>
+#
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# Etagsum is free software: you can redistribute it and/or modify it
+# under the terms of version 3 of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# Etagsum is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with Etagsum.  If not, see <https://www.gnu.org/licenses/>.
+
+import argparse
+import hashlib
+import os
+import sys
+
+class EtagSum:
+    def __init__(self, chunk_size):
+        self.md5 = hashlib.md5()
+        self.chunk_md5 = hashlib.md5()
+        self.chunk_size = chunk_size
+        self.chunk_remaining = chunk_size
+        self.full_chunks = 0
+
+    def update(self, x):
+        offset = 0
+        n = min(len(x), self.chunk_remaining)
+        while n > 0:
+            self.chunk_md5.update(x[offset:offset+n])
+            self.chunk_remaining -= n
+            if self.chunk_remaining == 0:
+                self.md5.update(self.chunk_md5.digest())
+                self.chunk_md5 = hashlib.md5()
+                self.chunk_remaining = self.chunk_size
+                self.full_chunks += 1
+            offset += n
+            n = min(len(x) - offset, self.chunk_remaining)
+
+    def digest(self):
+        md5 = self.md5.copy() # We might include the hash of an incomplete chunk.
+        chunks = self.full_chunks
+        if self.chunk_remaining != self.chunk_size: # We have an incomplete chunk.
+            md5.update(self.chunk_md5.digest())
+            chunks += 1
+        return (self.chunk_md5.digest(), 0) if self.full_chunks == 0 else (md5.digest(), chunks)
+
+    def etag_digest(self):
+        (digest, chunks) = self.digest()
+        return digest.hex() + ("-{:d}".format(chunks) if chunks > 0 else "")
+
+    
+def parse_chunk_size(s):
+    if s == "":
+        return None
+    
+    if s[-1].upper() == "K":
+        multiplier = 2**10
+        x = s[0:-1]
+    elif s[-1].upper() == "M":
+        multiplier = 2**20
+        x = s[0:-1]
+    elif s[-1].upper() == "G":
+        multiplier = 2**30
+        x = s[0:-1]
+    elif s[-1].upper() == "T":
+        multiplier = 2**40
+        x = s[0:-1]
+    else:
+        multiplier = 1
+        x = s
+
+    try:
+        ret = int(x)*multiplier
+        if ret <= 0:
+            ret = None
+    except ValueError:
+        ret = None
+
+    return ret
+
+
+def process_file(chunk_size, file_name):
+    etag = EtagSum(chunk_size)
+    if file_name == "-":
+        f = sys.stdin.buffer
+    else:
+        try:
+            f = open(file_name, "rb")
+        except OSError as e:
+            return (False, os.strerror(e.errno))
+
+    while True:
+        buf = f.read(2**10)
+        if not buf: break
+        etag.update(buf)
+
+    if file_name != "-":
+        f.close()
+
+    return (True, etag.etag_digest())
+    
+
+def main():
+    parser = argparse.ArgumentParser(description="Compute entity tag (Etag) checksums.")
+    parser_group_compute = parser.add_argument_group("Computing checksums")
+    parser_group_compute.add_argument("-s", "--size", nargs="+", action="append", metavar=("CHUNKSIZE", "FILE"), help="specify a chunk size for all files, until the argument is encountered again (optional suffixes K, M, G, T indicate corresponding powers of 2)")
+    parser_group_verify = parser.add_argument_group("Verifying checksums")
+    parser_group_verify.add_argument("-c", "--check", nargs="*", action="append", metavar="FILE", help="verify checksums from files")
+    parser_group_verify.add_argument("--ignore-missing", action="store_true", help="ignore missing files when verifying checksums")
+    parser_group_verify.add_argument("--status", action="store_true", help="don't output anything, use exit code to report success")
+    parser_group_verify.add_argument("--quiet", action="store_true", help="don't output OK for successfully verified files")
+    parser_group_verify.add_argument("--warn", action="store_true", help="warn about improperly formatted lines in checksum files")
+
+    args = parser.parse_args()
+    
+    if sum([arg is None for arg in [args.check, args.size]]) != 1:
+        print("{}: need at least one of --check and --size, and not both.".format(parser.prog), file=sys.stderr)
+        print("Try '{} --help' for more information.".format(parser.prog), file=sys.stderr)
+        exit(1)
+
+    exit_success = True
+    
+    if args.check is None: # Normal mode.
+        if args.ignore_missing or args.status or args.quiet or args.warn:
+            print("{}: Options for verifying checksums cannot be given together with --size.".format(parser.prog), file=sys.stderr)
+            exit(1)
+            
+        for (i, task) in enumerate(args.size):
+            chunk_size = parse_chunk_size(task[0])
+            if chunk_size is None:
+                print("{}: invalid chunk size '{}'".format(parser.prog, task[0]), file=sys.stderr)
+                exit(1)
+
+            if i == len(args.size) - 1 and len(task) == 1:
+                task.append("-")
+
+            for file_name in task[1:]:
+                (status, x) = process_file(chunk_size, file_name)
+                if status:
+                    print("{} {:d} {}".format(x, chunk_size, file_name), flush=True)
+                else:
+                    print("{}: {}: {}".format(parser.prog, file_name, x), file=sys.stderr, flush=True)
+
+    else: # Verification mode.
+        args.check = [x for y in args.check for x in y]
+        if len(args.check) == 0:
+            args.check.append("-")
+
+        num_file_errors = 0
+        num_line_errors = 0
+        num_checksum_errors = 0
+            
+        for verification_file_name in args.check:
+            if verification_file_name == "-":
+                f = sys.stdin.buffer
+            else:
+                try:
+                    f = open(verification_file_name, "rt")
+                except OSError as e:
+                    print("{}: {}: {}".format(parser.prog, verification_file_name, os.strerror(e.errno)), file=sys.stderr, flush=True)
+                    continue
+
+            for (i, line) in enumerate(f):
+                splitline = line.rstrip().split(" ", 2)
+                if len(splitline) != 3 or splitline[1] == "":
+                    if args.warn:
+                        print("{}: {}: {:d}: Malformed line".format(parser.prog, verification_file_name, i), file=sys.stderr, flush=True)
+                    num_line_errors += 1
+                    continue
+                checksum = splitline[0]
+                chunk_size = parse_chunk_size(splitline[1])
+                file_name = splitline[2]
+                if chunk_size is None:
+                    if args.warn:
+                        print("{}: {}: {:d}: Malformed line".format(parser.prog, verification_file_name, i), file=sys.stderr, flush=True)
+                    num_line_errors += 1
+                    continue
+
+                (status, x) = process_file(chunk_size, file_name)
+                if status:
+                    if x == checksum:
+                        if not args.quiet and not args.status:
+                            print("{}: OK".format(file_name), flush=True)
+                    else:
+                        if not args.status:
+                            print("{}: FAILED".format(file_name), flush=True)
+                        num_checksum_errors += 1
+                elif not args.ignore_missing:
+                    if not args.status:
+                        print("{}: {}: {}".format(parser.prog, file_name, x), file=sys.stderr, flush=True)
+                        print("{}: FAILED".format(file_name), flush=True)
+                    num_file_errors += 1
+
+            if args.status:
+                if num_file_errors != 0 or num_checksum_errors != 0 or num_line_errors != 0:
+                    exit_success = False
+            else:
+                if num_line_errors > 0:
+                    print("{}: WARNING: {:d} lines are improperly formatted".format(parser.prog, num_line_errors), file=sys.stderr)
+                if num_file_errors > 0:
+                    print("{}: WARNING: {:d} listed files could not be read".format(parser.prog, num_file_errors), file=sys.stderr)
+                if num_checksum_errors > 0:
+                    print("{}: WARNING: {:d} computed checksums did NOT match".format(parser.prog, num_checksum_errors), file=sys.stderr)
+
+            
+    if not exit_success:
+        exit(1)
+    
+if __name__ == "__main__":
+    main()
