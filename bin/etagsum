@@ -23,6 +23,13 @@ import hashlib
 import os
 import sys
 
+VERSION = "0.0.0"
+COPYRIGHT = \
+"""Copyright (C) 2021 Gard Spreemann
+License GPLv3: GNU GPL version 3 <https://gnu.org/licenses/gpl.html>.
+This is free software: you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law."""
+
 class EtagSum:
     def __init__(self, chunk_size):
         self.md5 = hashlib.md5()
@@ -111,6 +118,7 @@ def process_file(chunk_size, file_name):
 
 def main():
     parser = argparse.ArgumentParser(description="Compute entity tag (Etag) checksums.")
+    parser.add_argument("--version",  action="store_true", help="print version and exit")
     parser_group_compute = parser.add_argument_group("Computing checksums")
     parser_group_compute.add_argument("-s", "--size", nargs="+", action="append", metavar=("CHUNKSIZE", "FILE"), help="specify a chunk size for all files, until the argument is encountered again (optional suffixes K, M, G, T indicate corresponding powers of 2)")
     parser_group_verify = parser.add_argument_group("Verifying checksums")
@@ -121,6 +129,11 @@ def main():
     parser_group_verify.add_argument("--warn", action="store_true", help="warn about improperly formatted lines in checksum files")
 
     args = parser.parse_args()
+
+    if args.version:
+        print("etagsum {}".format(VERSION))
+        print(COPYRIGHT)
+        exit(0)
     
     if sum([arg is None for arg in [args.check, args.size]]) != 1:
         print("{}: need at least one of --check and --size, and not both.".format(parser.prog), file=sys.stderr)
@@ -128,7 +141,7 @@ def main():
         exit(1)
 
     exit_success = True
-    
+
     if args.check is None: # Normal mode.
         if args.ignore_missing or args.status or args.quiet or args.warn:
             print("{}: Options for verifying checksums cannot be given together with --size.".format(parser.prog), file=sys.stderr)
