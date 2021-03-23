@@ -12,6 +12,11 @@ This software is in no way affiliated with AWS.
 
 The code is licensed under the GNU General Public License, verson 3.0.
 
+## Installing
+
+For now, etagsum is just a single executable Python script, and can be
+installed any way you like. All Python 3 versions should be supported.
+
 ## Running
 
 Invocations are similar to those of `sha256sum` and friends from GNU
