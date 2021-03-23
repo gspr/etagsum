@@ -14,8 +14,9 @@ The code is licensed under the GNU General Public License, verson 3.0.
 
 ## Installing
 
-For now, etagsum is just a single executable Python script, and can be
-installed any way you like. All Python 3 versions should be supported.
+For now, etagsum is just a single executable Python script
+`bin/etagsum`, and can be installed any way you like. All Python 3
+versions should be supported.
 
 ## Running
 
