@@ -1,7 +1,7 @@
 # Entity tag (Etag) sums
 
-This program computes entity tag (Etag) checksums, à la those reported
-by various AWS components.
+This very simple and naïve program computes entity tag (Etag)
+checksums, à la those reported by various AWS components.
 
 See also
 [https://nonempty.org/software/etagsum](https://nonempty.org/software/etagsum).
